@@ -28,6 +28,7 @@ pub fn console_putchar(c: usize) {
 
 use crate::board::QEMUExit;
 /// use sbi call to shutdown the kernel
-pub fn shutdown() -> ! {
+pub fn shutdown() -> ! {//感叹号表明这个函数绝对不会正常返回到调用者。
+    //应用于进程终止
     crate::board::QEMU_EXIT_HANDLE.exit_failure();
 }
