@@ -26,7 +26,17 @@ pub fn get_time_ms() -> usize {
 /// get current time in microseconds
 #[allow(dead_code)]
 pub fn get_time_us() -> usize {
-    time::read() * MICRO_PER_SEC / CLOCK_FREQ
+    // time::read() * MICRO_PER_SEC / CLOCK_FREQ
+     let time_val = time::read();
+    //暂时用字面量---解决了
+     let clock_freq = 12_500_000;
+    let micro_per_sec = 1_000_000;
+     println!("[DEBUG] time::read() raw value = {}", time_val);
+     println!("[DEBUG] CLOCK_FREQ = {}, MICRO_PER_SEC = {}", clock_freq, micro_per_sec);
+    let product = time_val as u64 * micro_per_sec as u64;
+    let result = (product / clock_freq as u64) as usize;
+     println!("[DEBUG] product = {}, result = {}", product, result);
+    result
 }
 
 /// Set the next timer interrupt

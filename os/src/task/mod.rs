@@ -19,7 +19,7 @@ use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
 use lazy_static::*;
 use switch::__switch;
-pub use task::{TaskControlBlock, TaskStatus};
+pub use task::{TaskControlBlock, TaskStatus,SYSCALL_ID_CNT};
 
 pub use context::TaskContext;
 
@@ -36,24 +36,30 @@ pub struct TaskManager {
     /// total number of tasks
     num_app: usize,
     /// use inner value to get mutable access
-    inner: UPSafeCell<TaskManagerInner>,
+    pub inner: UPSafeCell<TaskManagerInner>,
+    //UPSafeCell是个智能指针  同一时刻只能有一个可变引用
+    //通过exclusive_access()得到可变引用
 }
 
 /// Inner of Task Manager
 pub struct TaskManagerInner {
     /// task list
-    tasks: [TaskControlBlock; MAX_APP_NUM],
+    pub tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
-    current_task: usize,
+    pub current_task: usize,
+    // ///维护当前任务的系统调用次数 索引为任务调用编号0-31
+    // syscall_num:[usize;512],
 }
 
-lazy_static! {
+lazy_static! {//推迟初始化：让复杂初始化代码在第一次被访问时才执行
     /// Global variable: TASK_MANAGER
+    //static声明 表示整个程序只有一个实例 即全局变量
     pub static ref TASK_MANAGER: TaskManager = {
         let num_app = get_num_app();
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            syscall_cnt:[0;SYSCALL_ID_CNT],//初始化每个实例的系统调用次数为0
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -65,6 +71,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    // syscall_num:[0;512],//初始化调用次数为0
                 })
             },
         }
