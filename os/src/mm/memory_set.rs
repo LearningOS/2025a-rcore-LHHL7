@@ -35,17 +35,23 @@ lazy_static! {
 }
 /// address space
 pub struct MemorySet {
-    page_table: PageTable,
+    ///页表
+    pub page_table: PageTable,
     areas: Vec<MapArea>,
 }
 
 impl MemorySet {
     /// Create a new empty `MemorySet`.
+    
     pub fn new_bare() -> Self {
         Self {
             page_table: PageTable::new(),
             areas: Vec::new(),
         }
+    }
+    ///判断有无映射 即有没有在页表里面
+    pub fn mapped(&self,vpn:VirtPageNum)->bool{
+        self.page_table.translate(vpn).is_some()
     }
     /// Get the page table token
     pub fn token(&self) -> usize {

@@ -116,7 +116,7 @@ impl PageTable {
         result
     }
     /// Find PageTableEntry by VirtPageNum
-    fn find_pte(&self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
+    pub fn find_pte(&self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
         let mut result: Option<&mut PageTableEntry> = None;
@@ -133,9 +133,28 @@ impl PageTable {
         }
         result
     }
+    fn find_pte_nomut(&self, vpn: VirtPageNum) -> Option<& PageTableEntry> {
+        let idxs = vpn.indexes();
+        let mut ppn = self.root_ppn;
+        let mut result: Option<& PageTableEntry> = None;
+        for (i, idx) in idxs.iter().enumerate() {
+            let pte = &mut ppn.get_pte_array()[*idx];
+            if !pte.is_valid() {
+                return None;
+            }
+            if i == 2 {
+                result = Some(pte);
+                break;
+            }
+            
+            ppn = pte.ppn();
+        }
+        result
+    }
     /// set the map between virtual page number and physical page number
     #[allow(unused)]
     pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
+        // println!("[page_table] MAP vpn {:?} -> ppn {:?}", vpn, ppn);
         let pte = self.find_pte_create(vpn).unwrap();
         assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
@@ -149,7 +168,7 @@ impl PageTable {
     }
     /// get the page table entry from the virtual page number
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
-        self.find_pte(vpn).map(|pte| *pte)
+        self.find_pte_nomut(vpn).map(|pte| *pte)
     }
     /// get the token from the page table
     pub fn token(&self) -> usize {
@@ -166,7 +185,12 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     while start < end {
         let start_va = VirtAddr::from(start);
         let mut vpn = start_va.floor();
-        let ppn = page_table.translate(vpn).unwrap().ppn();
+        // let ppn=page_table.translate(vpn).unwrap().ppn();
+        let entry = match page_table.translate(vpn){
+            Some(entry)=>entry,
+            None=> return Vec::new(),  
+        };//可能访问不可见的地址  若不可见那么返回一个空vec
+        let ppn=entry.ppn();
         vpn.step();
         let mut end_va: VirtAddr = vpn.into();
         end_va = end_va.min(VirtAddr::from(end));

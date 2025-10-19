@@ -5,7 +5,8 @@ use crate::mm::{
     kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,
 };
 use crate::trap::{trap_handler, TrapContext};
-
+/// 系统调用计数器数组长度（覆盖 0..511 号调用）
+pub const SYSCALL_ID_CNT:usize=512; 
 /// The task control block (TCB) of a task.
 pub struct TaskControlBlock {
     /// Save task context
@@ -28,6 +29,8 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+     ///每个任务维护自己的系统调用次数
+    pub syscall_cnt:[isize;SYSCALL_ID_CNT],
 }
 
 impl TaskControlBlock {
@@ -63,6 +66,7 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            syscall_cnt:[0;SYSCALL_ID_CNT],
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();

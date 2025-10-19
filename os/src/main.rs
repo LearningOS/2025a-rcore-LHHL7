@@ -102,6 +102,8 @@ pub fn rust_main() -> ! {
     mm::init();
     println!("[kernel] back to world!");
     mm::remap_test();
+    //调试
+    // mm::frame_allocator_test();
     trap::init();
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
