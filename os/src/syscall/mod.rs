@@ -52,7 +52,7 @@ const SYSCALL_SPAWN: usize = 400;
 mod fs;
 mod process;
 
-use fs::*;
+pub use fs::*;
 use process::*;
 
 use crate::fs::Stat;

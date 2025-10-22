@@ -3,7 +3,7 @@ use super::File;
 use crate::mm::UserBuffer;
 use crate::sbi::console_getchar;
 use crate::task::suspend_current_and_run_next;
-
+use core::any::Any;
 /// stdin file for getting chars from console
 pub struct Stdin;
 
@@ -11,6 +11,9 @@ pub struct Stdin;
 pub struct Stdout;
 
 impl File for Stdin {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
     fn readable(&self) -> bool {
         true
     }
@@ -42,6 +45,9 @@ impl File for Stdin {
 }
 
 impl File for Stdout {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
     fn readable(&self) -> bool {
         false
     }

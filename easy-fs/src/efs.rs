@@ -2,6 +2,7 @@ use super::{
     block_cache_sync_all, get_block_cache, Bitmap, BlockDevice, DiskInode, DiskInodeType, Inode,
     SuperBlock,
 };
+use core::mem::size_of;
 use crate::BLOCK_SZ;
 use alloc::sync::Arc;
 use spin::Mutex;
@@ -13,13 +14,14 @@ pub struct EasyFileSystem {
     pub inode_bitmap: Bitmap,
     ///Data bitmap
     pub data_bitmap: Bitmap,
-    inode_area_start_block: u32,
+    ///
+    pub inode_area_start_block: u32,
     data_area_start_block: u32,
 }
 
 type DataBlock = [u8; BLOCK_SZ];
 /// An easy fs over a block device
-impl EasyFileSystem {
+impl EasyFileSystem{
     /// A data block of block size
     pub fn create(
         block_device: Arc<dyn BlockDevice>,
@@ -109,8 +111,17 @@ impl EasyFileSystem {
         // acquire efs lock temporarily
         let (block_id, block_offset) = efs.lock().get_disk_inode_pos(0);
         // release efs lock
-        Inode::new(block_id, block_offset, Arc::clone(efs), block_device)
+        Inode::new(0,block_id, block_offset, Arc::clone(efs), block_device)
     }
+    /// 根据（块号，块内偏移）反算 inode 编号
+    pub fn get_inode_id(&self, block_id: usize, offset: usize) -> u32 {
+    // 一个 DiskInode 占 128 B，所以偏移 / 128 就是“第几个 inode”
+    let ino_in_group = offset / core::mem::size_of::<DiskInode>();
+    // 再算上 inode 区域起始块号，得到全局编号
+    (self.inode_area_start_block as u32 + block_id as u32- self.inode_area_start_block) as u32 * (BLOCK_SZ / size_of::<DiskInode>()) as u32
+        + ino_in_group as u32
+    }
+
     /// Get inode by id
     pub fn get_disk_inode_pos(&self, inode_id: u32) -> (u32, usize) {
         let inode_size = core::mem::size_of::<DiskInode>();

@@ -2,9 +2,10 @@
 
 mod inode;
 mod stdio;
-
+pub use easy_fs::DIRENT_SZ;
 use crate::mm::UserBuffer;
-
+pub use crate::fs::inode::ROOT_INODE;
+use core::any::Any;
 /// trait File for all file types
 pub trait File: Send + Sync {
     /// the file readable?
@@ -15,6 +16,9 @@ pub trait File: Send + Sync {
     fn read(&self, buf: UserBuffer) -> usize;
     /// write to the file from buf, return the number of bytes written
     fn write(&self, buf: UserBuffer) -> usize;
+    ///检查类型
+    fn as_any(&self) -> &dyn Any;
+     
 }
 
 /// The stat of a inode

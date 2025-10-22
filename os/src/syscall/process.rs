@@ -1,7 +1,7 @@
 //! Process management syscalls
 //!
 use alloc::sync::Arc;
-
+use alloc::vec::Vec;
 use crate::{
     loader::get_app_data_by_name,
     fs::{open_file, OpenFlags},
@@ -67,6 +67,8 @@ fn write_user_data<T>(token:usize,user_ptr:*mut T,data: &T)->Result<(),()>{
         Err(())
     }
 }
+
+/// task exits and submit an exit code
 pub fn sys_exit(exit_code: i32) -> ! {
     trace!("kernel:pid[{}] sys_exit", current_task().unwrap().pid.0);
     exit_current_and_run_next(exit_code);
@@ -175,11 +177,10 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     }
 }
 
-}
-
 /// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
      if _start & (PAGE_SIZE-1) !=0 || _port & !0x7 != 0 ||_port & 0x7 == 0 {
+
         return -1
     }//按页大小对齐 即 需要地址页内偏移为0
     if _len ==0 {return 0}
@@ -347,3 +348,103 @@ pub fn sys_set_priority(_prio: isize) -> isize {
     inner.pass=BIG_STRIDE/inner.prio;
     _prio
 }
+// pub fn sys_linkat(oldpath:*const u8,newpath:*const u8)->isize{
+//     //将裸指针转化为字符串
+//     let token=current_user_token();
+//     let oldpath_str=translated_str(token,oldpath);
+//     let newpath_str=translated_str(token,newpath);
+//     //若重名则错误
+//     if oldpath_str==newpath_str {
+//         return -1;
+//     }
+//     //先找原inode
+//     let old_inode=ROOT_INODE.find(oldpath_str).unwrap();
+//     //然后在根目录下插入目录项
+//     //先获取disk inode可变引用
+//     ROOT_INODE.modify_disk_inode(|root_dinode| {
+//         //先对根节点扩容
+//         //计算根节点有多少个目录项
+//         let file_count=root_dinode.size as usize /DIRENT_SZ;
+//         let new_size=(file_count+1)*DIRENT_SZ;//这里分两步计算是为了得到filecount 后面要用
+//         let fs=ROOT_INODE.fs.lock();//fs外面包一层mutex 要用lock拆
+//         ROOT_INODE.increase_size(new_size as u32,root_dinode,&mut fs);
+//         //用old_inode 新建一个目录项
+//         let old_inode_number=old_inode.read_disk_inode(|old_diskinode|{
+//             old_inode.find_inode_id(oldpath_str,old_diskinode).unwrap()});
+//         let new_dir=DirEntry::new(newpath_str,old_inode_number);
+//         //往目录写目录项 (若是写文件内容 用内存索引节点write_at)
+//         root_dinode.write_at(file_count*DIRENT_SZ,new_dir.as_bytes(),&BLOCK_DEVICE);
+//     })
+//     //维护硬链接数
+//     //同步回diskinode
+//     old_inode.modify_disk_inode(|old_diskinode|{
+//         old_diskinode.nlink+=1
+//         // 闭包里我们已独占整个 block cache，可以安全地改内存
+//         unsafe{
+//             Arc::get_mut_unchecked(&mut old_inode).nlink=old_diskinode.nlink;
+//     });
+//     0
+// }
+// pub fn sys_unlinkat(path:*const u8)->isize{
+//     let token=current_user_token();
+//     let file=translated_str(token,path);
+//     if ROOT_INODE.find(file).is_none() {
+//         //文件不存在
+//         return -1;
+//     }
+//     //删除目录项
+//         //先找目录项的idx
+//     let need_clear=ROOT_INODE.modify_disk_inode(|root_dinode|{
+//         let file_count=root_dinode.size as u32 /DIRENT_SZ;
+//         let mut idx=0;
+//         for i in 0..file_count {
+//             //每次循环读一个目录项到缓冲区de
+//             let mut de=DirEntry::new();
+//             root_dinode.read_at(i*DIRENT_SZ,de.as_bytes_mut(),&BLOCK_DEVICE);
+//             if de.name==file{
+//                 idx=i;
+//                 break;
+//             }
+//         }
+//         if idx != file_count-1{
+//         //读最后一个目录项
+//         let last_de=DirEntry::new();
+//         root_dinode.read_at((file_count-1)*DIRENT_SZ,last_de.as_bytes_mut(),&BLOCK_DEVICE);
+//         //然后覆盖掉idx那条目录项
+//         root_dinode.write_at(idx*DIRENT_SZ,last_de.as_bytes(),&BLOCK_DEVICE);
+//         }
+//         //修改size
+//         let new_size=(file_count-1)*DIRENT_SZ;
+//         root_dinode.size=new_size as u32;
+//         //inode--
+//         let inode=ROOT_INODE.find(file).unwrap();
+//         inode.modify_disk_inode(|dinode| {
+//             dinode.nlink-=1;
+//             unsafe{
+//             Arc::get_mut_unchecked(&mut inode).nlink=dinode.nlink;
+//             dinode.nlink==0
+//     }
+//         })
+//     });
+//     //  若发现inode现在为0 则需要回收
+//     if need_clear {
+//         //清空文件内容 回收数据块
+//         let inode=ROOT_INODE.find(file).unwrap();
+//         inode.modify_disk_inode(|dinode|{
+//             //此时清空文件内容
+//             let data_blocks=dinode.clear_size(&BLOCK_DEVICE);
+//             let fs=inode.fs.lock();
+//             //在位图上对应位置置0 
+//             for b in data_blocks {
+//                 fs.dealloc_data(b);
+//             }
+//         })
+//     }
+// }
+// pub fn sys_fstat(fd:i32,st:*mut Stat)->isize{
+//     //通过fd来找文件
+//     let token=current_user_token();
+//     let task=current_task().unwrap();
+//     let inner=task.acquire_inner_lock()
+
+// }

@@ -24,10 +24,15 @@ const INDIRECT2_BOUND: usize = INDIRECT1_BOUND + INODE_INDIRECT2_COUNT;
 #[repr(C)]
 pub struct SuperBlock {
     magic: u32,
+    ///
     pub total_blocks: u32,
+    ///
     pub inode_bitmap_blocks: u32,
+    ///
     pub inode_area_blocks: u32,
+    ///
     pub data_bitmap_blocks: u32,
+    ///
     pub data_area_blocks: u32,
 }
 
@@ -70,7 +75,9 @@ impl SuperBlock {
 /// Type of a disk inode
 #[derive(PartialEq)]
 pub enum DiskInodeType {
+    ///
     File,
+    ///
     Directory,
 }
 
@@ -81,11 +88,18 @@ type DataBlock = [u8; BLOCK_SZ];
 /// A disk inode
 #[repr(C)]
 pub struct DiskInode {
+    ///
     pub size: u32,
+    ///
     pub direct: [u32; INODE_DIRECT_COUNT],
+    ///
     pub indirect1: u32,
+    ///
     pub indirect2: u32,
+    ///维护引用计数 用于实现硬链接 即代表有多少个目录项指向这个inode
+    pub nlink:u32,
     type_: DiskInodeType,
+
 }
 
 impl DiskInode {
@@ -97,6 +111,7 @@ impl DiskInode {
         self.indirect1 = 0;
         self.indirect2 = 0;
         self.type_ = type_;
+        self.nlink=1;
     }
     /// Whether this inode is a directory
     pub fn is_dir(&self) -> bool {

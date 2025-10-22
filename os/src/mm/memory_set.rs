@@ -38,7 +38,8 @@ pub fn kernel_token() -> usize {
 
 /// address space
 pub struct MemorySet {
-    page_table: PageTable,
+    ///page table
+    pub page_table: PageTable,
     areas: Vec<MapArea>,
 }
 
@@ -175,7 +176,7 @@ impl MemorySet {
     }
     /// Include sections in elf and trampoline and TrapContext and user stack,
     /// also returns user_sp_base and entry point.
-    pub fn from_elf(elf_data: &[u8]) -> (Self, usize, usize) {
+    pub fn from_elf(elf_data: &[u8]) -> (Self, usize, usize,usize) {
         let mut memory_set = Self::new_bare();
         // map trampoline
         memory_set.map_trampoline();
@@ -245,10 +246,13 @@ impl MemorySet {
             ),
             None,
         );
+        // 1. 计算 elf 映射的最高地址
+        let elf_end_va: VirtAddr = max_end_vpn.into();
         (
             memory_set,
             user_stack_top,
             elf.header.pt2.entry_point() as usize,
+            elf_end_va.into(),          // 新增
         )
     }
     /// Create a new address space by copy code&data from a exited process's address space.
@@ -384,6 +388,10 @@ impl MapArea {
     }
     #[allow(unused)]
     pub fn shrink_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
+        let start = self.vpn_range.get_start();
+    assert!(new_end >= start, "[shrink_to]: new_end 0x{:x} < start 0x{:x}", new_end.0, start.0);
+    assert!(new_end <= self.vpn_range.get_end(), "[shrink_to]: new_end 0x{:x} > end 0x{:x}", new_end.0, self.vpn_range.get_end().0);
+
         for vpn in VPNRange::new(new_end, self.vpn_range.get_end()) {
             self.unmap_one(page_table, vpn)
         }
@@ -391,9 +399,18 @@ impl MapArea {
     }
     #[allow(unused)]
     pub fn append_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
+        let start = self.vpn_range.get_start();
+    println!("[append_to]: new_end 0x{:x}  start 0x{:x}", new_end.0, start.0);
+    println!("[append_to]: new_end 0x{:x}  end 0x{:x}", new_end.0, self.vpn_range.get_end().0);
+        if self.vpn_range.get_end().0 > new_end.0{//有前面的测例残留
+        //     for vpn in VPNRange::new(self.vpn_range.get_start(), new_end) {
+        //     self.map_one(page_table, vpn)
+        // }
+        }else{
         for vpn in VPNRange::new(self.vpn_range.get_end(), new_end) {
             self.map_one(page_table, vpn)
         }
+    }
         self.vpn_range = VPNRange::new(self.vpn_range.get_start(), new_end);
     }
     /// data: start-aligned but maybe with shorter length

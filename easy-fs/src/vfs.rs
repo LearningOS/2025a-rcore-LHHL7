@@ -6,53 +6,72 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use spin::{Mutex, MutexGuard};
+use log::info;
 /// Virtual filesystem layer over easy-fs
 pub struct Inode {
+    inode_id: u32,
     block_id: usize,
     block_offset: usize,
-    fs: Arc<Mutex<EasyFileSystem>>,
-    block_device: Arc<dyn BlockDevice>,
+    ///easy-fs-system
+    pub fs: Arc<Mutex<EasyFileSystem>>,
+    ///
+    pub block_device: Arc<dyn BlockDevice>,
 }
-
 impl Inode {
     /// Create a vfs inode
     pub fn new(
+        inode_id: u32,        // 直接存储 inode_id
         block_id: u32,
         block_offset: usize,
         fs: Arc<Mutex<EasyFileSystem>>,
         block_device: Arc<dyn BlockDevice>,
     ) -> Self {
-        Self {
+        // info!("[Inode::new] CALLED with block_id: {}, block_offset: {}", block_id, block_offset);
+        let inode=Self {
+            inode_id,      // 直接存储
             block_id: block_id as usize,
             block_offset,
             fs,
             block_device,
-        }
+        };
+        // info!("[Inode::new] Created Inode, its ino(): {}", inode.ino());
+        inode
+    }
+    /// 返回该 inode 的编号
+    pub fn ino(&self) -> u32 {
+        self.inode_id
+        // let fs = self.fs.lock();
+        // fs.get_inode_id(self.block_id, self.block_offset)
     }
     /// Call a function over a disk inode to read it
-    fn read_disk_inode<V>(&self, f: impl FnOnce(&DiskInode) -> V) -> V {
+    pub fn read_disk_inode<V>(&self, f: impl FnOnce(&DiskInode) -> V) -> V {
         get_block_cache(self.block_id, Arc::clone(&self.block_device))
             .lock()
             .read(self.block_offset, f)
     }
     /// Call a function over a disk inode to modify it
-    fn modify_disk_inode<V>(&self, f: impl FnOnce(&mut DiskInode) -> V) -> V {
+    pub fn modify_disk_inode<V>(&self, f: impl FnOnce(&mut DiskInode) -> V) -> V {
         get_block_cache(self.block_id, Arc::clone(&self.block_device))
             .lock()
             .modify(self.block_offset, f)
     }
     /// Find inode under a disk inode by name
-    fn find_inode_id(&self, name: &str, disk_inode: &DiskInode) -> Option<u32> {
+    pub fn find_inode_id(&self, name: &str, disk_inode: &DiskInode) -> Option<u32> {
         // assert it is a directory
         assert!(disk_inode.is_dir());
         let file_count = (disk_inode.size as usize) / DIRENT_SZ;
         let mut dirent = DirEntry::empty();
         for i in 0..file_count {
+            //调试
             assert_eq!(
                 disk_inode.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device,),
                 DIRENT_SZ,
             );
+            //调试
+            // info!("[find_inode_id] dir name:{} inode_id:{}",dirent.name(),dirent.inode_id());
             if dirent.name() == name {
+                //调试
+                // info!("[find_inode_id] find! dir name:{} inode_id:{}",dirent.name(),dirent.inode_id());
                 return Some(dirent.inode_id() as u32);
             }
         }
@@ -60,21 +79,44 @@ impl Inode {
     }
     /// Find inode under current inode by name
     pub fn find(&self, name: &str) -> Option<Arc<Inode>> {
-        let fs = self.fs.lock();
-        self.read_disk_inode(|disk_inode| {
-            self.find_inode_id(name, disk_inode).map(|inode_id| {
-                let (block_id, block_offset) = fs.get_disk_inode_pos(inode_id);
-                Arc::new(Self::new(
+        info!("[Inode::find] === START === Looking for '{}'", name);
+       self.read_disk_inode(|disk_inode| {
+            let inode_id0=self.find_inode_id(name, disk_inode);
+            info!("[Inode::find] find_inode_id returned: {:?}", inode_id0);
+            inode_id0.map(|inode_id| {
+                info!("[Inode::find] Processing inode_id: {}", inode_id);
+                let (block_id, block_offset) ={
+                    let fs = self.fs.lock();
+                    fs.get_disk_inode_pos(inode_id)
+                };
+                info!("[Inode::find] get_disk_inode_pos({}) = (block_id: {}, offset: {})", 
+                     inode_id, block_id, block_offset);
+                info!("[Inode::find] Before Inode::new");
+                let inode=Arc::new(Self::new(
+                    inode_id,
                     block_id,
                     block_offset,
                     self.fs.clone(),
                     self.block_device.clone(),
-                ))
-            })
-        })
+                ));
+                info!("[Inode::find] After Inode::new");
+                let actual_ino = inode.ino();
+            info!("[Inode::find] inode.ino() = {}", actual_ino);
+            let (block_id, block_offset) ={
+                    let fs = self.fs.lock();
+                    fs.get_disk_inode_pos(actual_ino)
+                };
+                info!("[Inode::find] get_disk_inode_pos({}) = (block_id: {}, offset: {})",
+                actual_ino, block_id, block_offset); 
+            info!("[Inode::find] inode:{} (block_id: {}, offset: {})",
+                actual_ino, inode.block_id, inode.block_offset); 
+            info!("[Inode::find] === END === Looking for '{}'", name);
+            inode
+                })//map
+            })//read     
     }
     /// Increase the size of a disk inode
-    fn increase_size(
+    pub fn increase_size(
         &self,
         new_size: u32,
         disk_inode: &mut DiskInode,
@@ -131,6 +173,7 @@ impl Inode {
         block_cache_sync_all();
         // return inode
         Some(Arc::new(Self::new(
+            new_inode_id,
             block_id,
             block_offset,
             self.fs.clone(),
