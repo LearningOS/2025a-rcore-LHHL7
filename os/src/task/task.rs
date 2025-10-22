@@ -1,13 +1,14 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
-use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
-use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle,BIG_STRIDE};
+use crate::config::{TRAP_CONTEXT_BASE,PAGE_SIZE};
+use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,MapPermission};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
+
 
 /// Task control block structure
 ///
@@ -68,6 +69,13 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    ///priority
+    pub prio:usize,
+    ///To represent the "length" that the process has run 
+    pub stride:usize,
+    ///help caculate the stride
+    pub pass:usize,
 }
 
 impl TaskControlBlockInner {
@@ -89,7 +97,52 @@ impl TaskControlBlockInner {
 
 impl TaskControlBlock {
     /// Create a new process
-    ///
+    /// 创建一个“空壳”TCB：
+    /// - 不解析 ELF，也不建立任何用户地址空间
+    /// - 仅分配 PID、内核栈，把状态设为 Ready
+    /// - 调用者随后必须 `exec()` 来真正加载程序
+    pub fn new_empty() -> Self {
+        let pid_handle = pid_alloc();
+        let kernel_stack = kstack_alloc();
+        let kernel_stack_top = kernel_stack.get_top();
+
+        // 先建一个 **空** MemorySet，仅含内核映射，用户空间为 0
+        let mut memory_set = MemorySet::new_kernel();
+        // 2. 手动插一个用户 trap 帧映射，权限 = R | W
+        memory_set.insert_framed_area(
+        TRAP_CONTEXT_BASE.into(),
+        (TRAP_CONTEXT_BASE + PAGE_SIZE).into(),
+        MapPermission::R | MapPermission::W,
+    );
+        let trap_cx_ppn = memory_set
+            .translate(VirtAddr::from(TRAP_CONTEXT_BASE).into())
+            .unwrap()
+            .ppn();
+
+        Self {
+            pid: pid_handle,
+            kernel_stack,
+            inner: unsafe {
+                UPSafeCell::new(TaskControlBlockInner {
+                    trap_cx_ppn,
+                    base_size: 0,                  // exec 里再设
+                    task_cx: TaskContext::goto_trap_return(kernel_stack_top),
+                    task_status: TaskStatus::Ready,
+                    memory_set,
+                    parent: None,
+                    children: Vec::new(),
+                    exit_code: 0,
+                    heap_bottom: 0,
+                    program_brk: 0,
+                    // —— spawn 后续会 exec 来填充真正的用户空间
+                    stride: 0,
+                    prio: 16,
+                    pass: BIG_STRIDE / 16,
+                })
+            },
+        }
+    }
+
     /// At present, it is only used for the creation of initproc
     pub fn new(elf_data: &[u8]) -> Self {
         // memory_set with elf program headers/trampoline/trap context/user stack
@@ -118,6 +171,9 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    stride:0,
+                    prio:16,
+                    pass:BIG_STRIDE/16,
                 })
             },
         };
@@ -191,6 +247,9 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    pass:parent_inner.pass,
+                    prio:parent_inner.prio,
+                    stride:0,
                 })
             },
         });
