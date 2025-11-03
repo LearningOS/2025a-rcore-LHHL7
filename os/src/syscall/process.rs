@@ -1,10 +1,11 @@
 use crate::{
     fs::{open_file, OpenFlags},
-    mm::{translated_ref, translated_refmut, translated_str},
+    mm::{translated_ref, translated_refmut, translated_str,translated_byte_buffer},
     task::{
         current_process, current_task, current_user_token, exit_current_and_run_next, pid2process,
         suspend_current_and_run_next, SignalFlags,
     },
+    timer::get_time_us,
 };
 use alloc::{string::String, sync::Arc, vec::Vec};
 
@@ -14,7 +15,53 @@ pub struct TimeVal {
     pub sec: usize,
     pub usec: usize,
 }
-
+///由内核向token代表的用户空间 user_ptr指向的位置写入data
+fn write_user_data<T>(token:usize,user_ptr:*mut T,data: &T)->Result<(),()>{
+        //返回Result<(),()> 代表只关心是ok还是err  对变体具体值不关心 相当于bool 且还有一些bool没有的优点
+    //将数据转化为字节数组
+    //此时最好将time_val实例数据变成一个字节切片
+    //这会让数据复制时方便 并且处理跨页情况轻松
+    //core::slice::from_raw_parts 内部实际上会解引用裸指针来创建切片，这是不安全的操作。
+    let data_bytes=unsafe{
+        core::slice::from_raw_parts(data as *const T as *const u8,
+        core::mem::size_of::<T>()
+        )//接受ptr和len
+    };
+    //总结：此时我想将数据转化为字节数组 那么ptr就需要为字节的指针类型  
+    // 而data此时是T的引用 不能直接转化为字节指针 那么先转化为裸指针 再转化
+    //因为普通的类型引用 记录着内存地址 类型大小等信息 不能直接转化为另一个类型引用
+    //裸指针只记录着内存地址
+    //此时思路借助translated_byte_buffer  
+    // 将用户空间的ts指向的长度为timeval结构体长度的那块区域 变成内核可访问的
+    //函数返回一个字节数组  向它写数据就相当于向用户空间写
+    let user_buffers=translated_byte_buffer(
+        token,
+        user_ptr as *const u8,
+        core::mem::size_of::<T>()
+    );//将用户空间这块区域变成字节切片
+     if user_buffers.is_empty() {
+        return Err(())
+    }
+    let mut total_copied=0;
+    for buffer in user_buffers {
+        let to_copied=data_bytes.len()-total_copied;
+        if to_copied ==0{
+            break;
+        }
+        let copy_len=to_copied.min(buffer.len());
+        //循环将数据写入字节切片
+        for i in 0..copy_len {//索引区间可以省  0 ，for 循环区间不能省。
+            buffer[i]=data_bytes[total_copied+i];
+        }
+        total_copied+=copy_len;
+    }
+    let len=core::mem::size_of::<T>();
+    if len==total_copied {
+         Ok(())
+    }else{
+        Err(())
+    }
+}
 /// exit syscall
 ///
 /// exit the current task and run the next task in task list
@@ -152,11 +199,24 @@ pub fn sys_kill(pid: usize, signal: u32) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().process.upgrade().unwrap().getpid()
-    );
-    -1
+    trace!("kernel: sys_get_time");
+    // let token={
+    // let inner=TASK_MANAGER.inner.exclusive_access();
+    // let cur_task_id=inner.current_task;
+    // inner.tasks[cur_task_id].memory_set.token()
+    // };
+    let token=current_user_token();
+    //获取时间
+    let us=get_time_us();
+    let time_val=TimeVal{
+        sec:us/1_000_000,
+        usec:us%1_000_000,
+    };
+    let data=&time_val;
+    match write_user_data(token,_ts,data){
+        Ok(())=>0,
+        Err(())=>-1,
+    }
 }
 
 /// mmap syscall

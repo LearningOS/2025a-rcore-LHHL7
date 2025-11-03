@@ -1,6 +1,7 @@
 use crate::sync::{Condvar, Mutex, MutexBlocking, MutexSpin, Semaphore};
 use crate::task::{block_current_and_run_next, current_process, current_task};
 use crate::timer::{add_timer, get_time_ms};
+use crate::deadlock::*;
 use alloc::sync::Arc;
 /// sleep syscall
 pub fn sys_sleep(ms: usize) -> isize {
@@ -70,6 +71,18 @@ pub fn sys_mutex_lock(mutex_id: usize) -> isize {
     );
     let process = current_process();
     let process_inner = process.inner_exclusive_access();
+    if process_inner.deadlock_detect==true {
+         //死锁检测
+         let mutex_res_id=mutex_res_id(mutex_id);
+         let count=1;
+         init_avail(mutex_res_id,count);//初始化avail
+         //先请求资源
+         request(mutex_res_id,1);
+         //尝试分配并用安全算法检查
+         if !check(mutex_res_id,1){return -0xDEAD}
+         //安全了 此时可分配
+         alloc(mutex_res_id,1);
+    }
     let mutex = Arc::clone(process_inner.mutex_list[mutex_id].as_ref().unwrap());
     drop(process_inner);
     drop(process);
@@ -95,6 +108,9 @@ pub fn sys_mutex_unlock(mutex_id: usize) -> isize {
     drop(process_inner);
     drop(process);
     mutex.unlock();
+    //回收资源
+    let mutex_res_id=mutex_res_id(mutex_id);
+    dealloc(mutex_res_id,1);
     0
 }
 /// semaphore create syscall
@@ -147,6 +163,9 @@ pub fn sys_semaphore_up(sem_id: usize) -> isize {
     let sem = Arc::clone(process_inner.semaphore_list[sem_id].as_ref().unwrap());
     drop(process_inner);
     sem.up();
+    //回收资源
+    let sem_res_id=sem_res_id(sem_id);
+    dealloc(sem_res_id,1);
     0
 }
 /// semaphore down syscall
@@ -164,6 +183,19 @@ pub fn sys_semaphore_down(sem_id: usize) -> isize {
     );
     let process = current_process();
     let process_inner = process.inner_exclusive_access();
+    if process_inner.deadlock_detect==true {
+         //死锁检测
+         let sem_res_id=sem_res_id(sem_id);
+         //先请求资源
+         let semaphore=process_inner.semaphore_list[sem_id].clone().unwrap();
+         let count=semaphore.inner.exclusive_access().count;
+         init_avail(sem_res_id,count as i32);
+         request(sem_res_id,1);
+         //尝试分配并用安全算法检查
+         if !check(sem_res_id,1){return -0xDEAD}
+         //安全了 此时可分配
+         alloc(sem_res_id,1);
+    }
     let sem = Arc::clone(process_inner.semaphore_list[sem_id].as_ref().unwrap());
     drop(process_inner);
     sem.down();
@@ -246,6 +278,9 @@ pub fn sys_condvar_wait(condvar_id: usize, mutex_id: usize) -> isize {
 ///
 /// YOUR JOB: Implement deadlock detection, but might not all in this syscall
 pub fn sys_enable_deadlock_detect(_enabled: usize) -> isize {
-    trace!("kernel: sys_enable_deadlock_detect NOT IMPLEMENTED");
-    -1
+    if _enabled !=0 && _enabled !=1{return -1;}
+    let process=current_process();
+    let mut inner=process.inner_exclusive_access();
+    inner.deadlock_detect= _enabled !=0;//_enabled=1即开启
+    0
 }
